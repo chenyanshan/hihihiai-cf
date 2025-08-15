@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hihihiai MM: Mermaid 实时渲染工具</title>
+    <title>Mermaid Pro: 智能渲染工具</title>
     <style>
         :root {
             --secondary-color: #f6821f;
@@ -36,7 +36,7 @@
             flex-grow: 1;
             padding: 1rem;
             gap: 1rem;
-            overflow: hidden;
+            overflow: hidden; /* 防止外层容器被撑开 */
         }
         .panel {
             flex: 1;
@@ -68,6 +68,7 @@
             border-radius: 8px;
             box-shadow: 0 4px 8px var(--shadow-color);
             padding: 1rem;
+            min-height: 0; /* flex 布局下的关键属性，防止子元素溢出 */
         }
         #graph-output {
             width: 100%;
@@ -75,13 +76,19 @@
             display: flex;
             justify-content: center;
             align-items: center;
-            overflow: auto;
+            overflow: auto; /* 确保在任何情况下都可滚动 */
             flex-grow: 1;
         }
+        /* ---- 关键修复 START ---- */
         #graph-output svg {
-            max-width: 100%;
-            max-height: 100%;
+            /* * 1. `max-width` 和 `max-height` 确保SVG不会超出其容器的边界。
+             * 2. `!important` 用于强制覆盖 Mermaid 可能添加的内联 style 属性 (例如 style="width: 2000px;")，
+             * 这是确保我们自己的缩放规则能够生效的关键。
+             */
+            max-width: 100% !important;
+            max-height: 100% !important;
         }
+        /* ---- 关键修复 END ---- */
         .actions {
             display: flex;
             gap: 10px;
@@ -105,12 +112,12 @@
 </head>
 <body>
 
-    <header><h1>Hihihiai MM: Mermaid 实时渲染工具</h1></header>
+    <header><h1>Mermaid Pro: 智能渲染工具</h1></header>
     
     <div class="container">
         <div class="panel">
-            <h3 class="panel-header">1. 在此粘贴或输入 Mermaid 代码 (自动渲染)</h3>
-            <textarea id="mermaid-input" placeholder="例如:&#10;graph TD&#10;    A --&gt; B;"></textarea>
+            <h3 class="panel-header">1. 在此粘贴或输入 Mermaid 代码 (自动兼容渲染)</h3>
+            <textarea id="mermaid-input"></textarea>
             <div class="actions">
                 <button id="download-svg-button" class="button secondary">下载为 SVG</button>
                 <button id="download-png-button" class="button success">下载为 PNG</button>
@@ -131,26 +138,30 @@
         const downloadSvgButton = document.getElementById('download-svg-button');
         const downloadPngButton = document.getElementById('download-png-button');
 
-        let lastValidSvg = ''; // 只存储最后一次有效的SVG
+        let lastValidSvg = '';
         mermaid.initialize({ startOnLoad: false, theme: 'default' });
 
+        const preprocessMermaidCode = (code) => {
+            const regex = /^(\s*subgraph\s+)(?!")(.+)/gm;
+            return code.replace(regex, '$1"$2"');
+        };
+
         const renderGraph = async () => {
-            const graphDefinition = inputArea.value;
-            if (!graphDefinition.trim()) {
+            const rawCode = inputArea.value;
+            const processedCode = preprocessMermaidCode(rawCode);
+
+            if (!processedCode.trim()) {
                 outputDiv.innerHTML = '<p>请输入代码以开始...</p>';
                 lastValidSvg = '';
                 return;
             }
             
             try {
-                // 先检查语法是否有效，而不会直接渲染错误
-                await mermaid.parse(graphDefinition);
-                // 语法有效，才进行渲染
-                const { svg } = await mermaid.render(`mermaid-graph-${Date.now()}`, graphDefinition);
+                await mermaid.parse(processedCode);
+                const { svg } = await mermaid.render(`mermaid-graph-${Date.now()}`, processedCode);
                 outputDiv.innerHTML = svg;
-                lastValidSvg = svg; // 保存有效的SVG
+                lastValidSvg = svg;
             } catch (error) {
-                // FIX 1: 隐藏报错信息。发生错误时，不做任何事，保留上一个有效图形
                 console.error("Mermaid syntax error:", error.message);
             }
         };
@@ -171,7 +182,6 @@
             URL.revokeObjectURL(url);
         };
 
-        // --- 事件监听器 ---
         inputArea.addEventListener('input', debounce(renderGraph, 300));
 
         downloadSvgButton.addEventListener('click', () => {
@@ -179,26 +189,21 @@
             download('mermaid-graph.svg', new Blob([lastValidSvg], { type: 'image/svg+xml;charset=utf-8' }));
         });
         
-        // FIX 3: PNG下载的最终修复方案
         downloadPngButton.addEventListener('click', () => {
             if (!lastValidSvg) { alert('没有可下载的图表！'); return; }
             
             const svgElement = outputDiv.querySelector('svg');
             if (!svgElement) { alert('找不到图表元素。'); return; }
 
-            // 从SVG的viewBox属性读取其真实的、内在的尺寸
             const viewBox = svgElement.getAttribute('viewBox');
-            if (!viewBox) {
-                alert('无法从图表获取准确尺寸，无法生成PNG。');
-                return;
-            }
+            if (!viewBox) { alert('无法从图表获取准确尺寸，无法生成PNG。'); return; }
+            
             const viewBoxParts = viewBox.split(/[\s,]+/);
             const intrinsicWidth = parseFloat(viewBoxParts[2]);
             const intrinsicHeight = parseFloat(viewBoxParts[3]);
             
             if (isNaN(intrinsicWidth) || isNaN(intrinsicHeight) || intrinsicWidth <= 0 || intrinsicHeight <= 0) {
-                 alert('读取到无效的图表尺寸，无法生成PNG。');
-                 return;
+                 alert('读取到无效的图表尺寸，无法生成PNG。'); return;
             }
 
             const img = new Image();
@@ -210,7 +215,6 @@
                 const padding = 20;
                 const dpr = window.devicePixelRatio || 1;
                 
-                // 使用从viewBox读取到的真实宽高来设置画布尺寸
                 canvas.width = (intrinsicWidth + padding * 2) * dpr;
                 canvas.height = (intrinsicHeight + padding * 2) * dpr;
 
@@ -220,23 +224,28 @@
                 ctx.drawImage(img, padding, padding, intrinsicWidth, intrinsicHeight);
 
                 canvas.toBlob((blob) => {
-                    if (blob) {
-                        download('mermaid-graph.png', blob);
-                    }
+                    if (blob) { download('mermaid-graph.png', blob); }
                 }, 'image/png');
             };
             
-            img.onerror = () => {
-                alert("图片加载失败，无法生成PNG。");
-            };
+            img.onerror = () => { alert("图片加载失败，无法生成PNG。"); };
         });
 
-        // 页面加载时，渲染一个欢迎页
         window.addEventListener('load', () => {
             inputArea.value = `graph TD
-    A[欢迎使用 Mermaid Pro] --> B{输入代码, 实时预览};
-    B --> C[下载SVG格式<br>矢量、清晰];
-    B --> D[下载PNG格式<br>位图、方便分享];`;
+    A[欢迎使用 Mermaid Pro] --> B{输入一个非常非常高的图表代码};
+    B --> C[它会自动缩小];
+    C --> D[以适应屏幕大小];
+    D --> E[并且还可以滚动查看哦];
+    E --> F[超长内容];
+    F --> G[超长内容];
+    G --> H[超长内容];
+    H --> I[超长内容];
+    I --> J[超长内容];
+    J --> K[超长内容];
+    K --> L[超长内容];
+    L --> M[超长内容];
+    M --> N[超长内容];`;
             renderGraph();
         });
     </script>
